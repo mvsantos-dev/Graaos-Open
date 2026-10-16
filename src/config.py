@@ -26,7 +26,7 @@ RAW_SOJA_ARQUIVO = "exportacoes.parquet"
 API_BASE_URL = "https://api-comexstat.mdic.gov.br"
 API_HOST = urlsplit(API_BASE_URL).hostname
 IDIOMA = "pt"
-USER_AGENT = "graaos (+https://github.com/AliceCullen-html/graaos)"
+USER_AGENT = "graaos (+https://github.com/mvsantos-dev/graaos)"
 
 ENDPOINT_CONSULTA = "/general"
 ENDPOINT_ULTIMA_ATUALIZACAO = "/general/dates/updated"
