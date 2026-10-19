@@ -89,6 +89,9 @@ INVALIDOS = [
     ("data: 2026-01\n", 1, "cada evento começa com '- '"),
     ("-data: 2026-01\n", 1, "falta um espaço depois do '-'"),
     ("-# comentário\n", 1, "falta um espaço depois do '-'"),
+    ("---\n- data: 2026-01\n", 1, "marcador de documento '---'"),
+    ("--- # início\n", 1, "marcador de documento '---'"),
+    (_evento() + "...\n", 5, "marcador de documento '...'"),
     ("  titulo: x\n", 1, "antes do primeiro evento"),
     ("- data: 2026-01\n\ttitulo: x\n", 2, "tabulação"),
     ("- data: 2026-01\n   titulo: x\n", 2, "recuo de 3 espaços"),
@@ -151,6 +154,8 @@ INVALIDOS = [
     (_evento(fonte_url="http://exemplo.gov.br/a"), 3, "precisa começar com https://"),
     (_evento(fonte_url="ftp://exemplo.gov.br/a"), 3, "precisa começar com https://"),
     (_evento(fonte_url="exemplo.gov.br/a"), 3, "precisa começar com https://"),
+    (_evento(fonte_url="HTTPS://exemplo.gov.br/a"), 3, "precisa começar com https:// (em minúsculas)"),  # o script da página o descartaria
+    (_evento(fonte_url="Https://exemplo.gov.br/a"), 3, "precisa começar com https://"),
     (_evento(fonte_url="https://"), 3, "sem um domínio válido"),
     (_evento(fonte_url="https://localhost/a"), 3, "sem um domínio válido"),
     (_evento(fonte_url="https://192.168.0.1/a"), 3, "sem um domínio válido"),
