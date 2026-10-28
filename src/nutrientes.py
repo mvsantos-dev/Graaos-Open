@@ -53,6 +53,7 @@ COLUNAS = [
     "teor_k2o_pct",
     "toneladas",
     "amostra_pequena",
+    "fob_usd_t",
     "cif_usd_t",
     "custo_sem_credito_usd_t",
     "custo_n_ureia_usd_t",
@@ -67,12 +68,12 @@ COLUNAS = [
 def custo_mensal(base: pd.DataFrame, ptax: pd.DataFrame | None = None) -> pd.DataFrame:
     """Uma linha por mês × produto, de todos os meses das importações.
 
-    `base`: importações (transform.carregar_base: ano, mes, co_ncm, toneladas, vl_cif);
+    `base`: importações (transform.carregar_base: ano, mes, co_ncm, toneladas, vl_fob, vl_cif);
     `ptax`: benchmark.ler_ptax() (mes e brl_por_usd). Sem PTAX, o custo em reais fica vazio.
     """
     ncm_produto = {ncm: chave for chave, p in PRODUTOS.items() for ncm in p["ncms"]}
     imp = base[base["co_ncm"].isin(ncm_produto)].assign(produto=lambda d: d["co_ncm"].map(ncm_produto))
-    imp = imp.groupby(["ano", "mes", "produto"], as_index=False)[["toneladas", "vl_cif"]].sum()
+    imp = imp.groupby(["ano", "mes", "produto"], as_index=False)[["toneladas", "vl_fob", "vl_cif"]].sum()
 
     meses = base[["ano", "mes"]].drop_duplicates()
     df = meses.merge(pd.DataFrame({"produto": list(PRODUTOS)}), how="cross").merge(imp, on=["ano", "mes", "produto"], how="left")
@@ -88,6 +89,7 @@ def custo_mensal(base: pd.DataFrame, ptax: pd.DataFrame | None = None) -> pd.Dat
     pontos = (df["teor_n_pct"] + df["teor_p2o5_pct"] + df["teor_k2o_pct"]) / 100
 
     com_volume = df["toneladas"] > 0
+    df["fob_usd_t"] = (df["vl_fob"].astype("float64") / df["toneladas"]).where(com_volume)
     df["cif_usd_t"] = (df["vl_cif"].astype("float64") / df["toneladas"]).where(com_volume)
     df["amostra_pequena"] = com_volume & (df["toneladas"] < CORTE_AMOSTRA_T)
     df["custo_sem_credito_usd_t"] = df["cif_usd_t"] / principal
@@ -129,6 +131,7 @@ def bloco_dashboard(df: pd.DataFrame, periodos: list[str], num) -> dict:
             "ncms": info["ncms"],
             "credito_n": credito,
             "t": [num(v, 0) for v in p["toneladas"]],
+            "fob": [num(v, 6) for v in p["fob_usd_t"]],
             "cif": [num(v, 6) for v in p["cif_usd_t"]],
             "custo": [num(v, 6) for v in p["custo_nutriente_usd_t"]],
             "custo_brl": [num(v, 6) for v in p["custo_nutriente_brl_t"]],
