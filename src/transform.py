@@ -15,6 +15,9 @@ Lê os dados brutos (data/raw/, via ingest.ler_raw) e o grupo de cada NCM
   marcando as rotas com volume relevante (CORTE_ROTA_T);
 - share_uf_ano.csv: o mesmo share por UF de destino (a UF do produto no Comex Stat),
   com a variação sobre o mesmo período do ano anterior: a visão por estado do dashboard;
+- share_origem_produto_ano.csv: o mesmo share por país de origem, por ano e produto (as
+  chaves dos sinais: ureia, sulfato de amônio, KCl, MAP, DAP, TSP e o grupo NPK inteiro), com
+  FOB e CIF US$/t: as maiores origens das páginas de produto e o que cada país vende;
 - custo_nutriente_mensal.csv: custo por nutriente, o "custo por molécula" (src/nutrientes.py):
   US$ por tonelada de N, P2O5 e K2O de cada fertilizante no porto (CIF ÷ teor), e em reais pela
   PTAX se houver data/raw_cambio;
@@ -73,6 +76,12 @@ CORTE_ROTA_T = 50_000
 TOP_SANKEY = 7  # origens e URFs por lado no diagrama de fluxo; o resto vira "Outros"...
 MIN_SHARE_SANKEY = 2.0  # ...assim como quem tem menos de 2% das toneladas do ano
 TOP_ROTAS = 20  # rotas relevantes por ano e grupo na tabela de frete do dashboard
+# Produtos das páginas de produto e de origem (as chaves dos sinais, menos os insumos): os NCMs
+# do custo por nutriente (src/nutrientes.py) e, em "npk", o grupo NPK inteiro.
+PRODUTOS_ORIGEM = ("ureia", "sulfato_amonio", "kcl", "map", "dap", "tsp", "npk")
+_ORDEM_PRODUTO = {produto: i for i, produto in enumerate(PRODUTOS_ORIGEM)}
+ANOS_ORIGEM_PRODUTO = 3  # anos mais recentes do bloco "origens_produto" do dashboard.json
+MINIMO_ORIGEM_PRODUTO_T = 1_000  # abaixo disso, a origem vai para "Outros" no bloco (o CSV tem todas)
 
 
 # --- Base ----------------------------------------------------------------------------------
@@ -109,11 +118,13 @@ def _somar(df: pd.DataFrame, chaves: list[str]) -> pd.DataFrame:
 
 
 def _ordenar(df: pd.DataFrame, colunas: list[str], decrescentes: tuple[str, ...] = ()) -> pd.DataFrame:
-    """Ordena com os grupos na ordem N, P, K, NPK, TOTAL."""
-    temp = df.assign(_grupo=df["grupo"].map(_ORDEM_GRUPO))
-    chaves = ["_grupo" if c == "grupo" else c for c in colunas]
+    """Ordena com os grupos na ordem N, P, K, NPK, TOTAL (e os produtos na de PRODUTOS_ORIGEM)."""
+    ordem = {"grupo": _ORDEM_GRUPO, "produto": _ORDEM_PRODUTO}
+    temp = df.assign(**{f"_{c}": df[c].map(ordem[c]) for c in colunas if c in ordem})
+    chaves = [f"_{c}" if c in ordem else c for c in colunas]
     ascendentes = [c not in decrescentes for c in colunas]
-    return temp.sort_values(chaves, ascending=ascendentes, kind="mergesort").drop(columns="_grupo").reset_index(drop=True)
+    temp = temp.sort_values(chaves, ascending=ascendentes, kind="mergesort")
+    return temp.drop(columns=[c for c in chaves if c.startswith("_")]).reset_index(drop=True)
 
 
 # --- Cálculos -----------------------------------------------------------------------------
@@ -140,18 +151,20 @@ def precos(base: pd.DataFrame, por_origem: bool = True) -> pd.DataFrame:
     return _ordenar(df, ["ano", "mes", "grupo", "toneladas"], decrescentes=("toneladas",))
 
 
-def shares_anuais(base: pd.DataFrame, entidade: list[str]) -> pd.DataFrame:
+def shares_anuais(base: pd.DataFrame, entidade: list[str], por: str = "grupo") -> pd.DataFrame:
     """Share em toneladas por ano × grupo × entidade (país ou URF), com variação YoY.
 
     A comparação é sempre com os mesmos meses do ano anterior: num ano parcial
     (ex.: jan-set/2026) a base é jan-set/2025. Se o ano anterior não tiver todos
     esses meses, a variação fica vazia. Quem importou no período anterior e não
-    importou no atual aparece com zero.
+    importou no atual aparece com zero. Com `por="produto"` (base de produtos_da_base),
+    o share é dentro de cada produto, sem TOTAL, e leva também o CIF.
     """
-    dados = com_total(base)
+    dados = com_total(base) if por == "grupo" else base
     meses = meses_por_ano(base)
-    chaves = ["ano", "grupo", *entidade]
-    df = _somar(dados, chaves)[[*chaves, "toneladas", "vl_fob"]]
+    chaves = ["ano", por, *entidade]
+    valores = ["toneladas", "vl_fob"] if por == "grupo" else ["toneladas", "vl_fob", "vl_cif"]
+    df = _somar(dados, chaves)[[*chaves, *valores]]
 
     comparaveis = [ano for ano in meses if ano - 1 in meses and set(meses[ano]) <= set(meses[ano - 1])]
     anteriores = []
@@ -161,23 +174,33 @@ def shares_anuais(base: pd.DataFrame, entidade: list[str]) -> pd.DataFrame:
     if anteriores:
         anterior = pd.concat(anteriores, ignore_index=True)
         df = df.merge(anterior.rename(columns={"toneladas": "toneladas_ano_anterior"}), on=chaves, how="outer")
-        df[["toneladas", "vl_fob"]] = df[["toneladas", "vl_fob"]].fillna(0)
+        df[valores] = df[valores].fillna(0)
         com_anterior = df["ano"].isin(comparaveis)
         df.loc[com_anterior, "toneladas_ano_anterior"] = df.loc[com_anterior, "toneladas_ano_anterior"].fillna(0)
     else:
         df["toneladas_ano_anterior"] = float("nan")
 
-    por = ["ano", "grupo"]
-    df["share_t_pct"] = 100 * df["toneladas"] / df.groupby(por)["toneladas"].transform("sum")
+    ano_e = ["ano", por]
+    df["share_t_pct"] = 100 * df["toneladas"] / df.groupby(ano_e)["toneladas"].transform("sum")
     df["share_t_pct_ano_anterior"] = (
-        100 * df["toneladas_ano_anterior"] / df.groupby(por)["toneladas_ano_anterior"].transform("sum")
+        100 * df["toneladas_ano_anterior"] / df.groupby(ano_e)["toneladas_ano_anterior"].transform("sum")
     )
     anterior_t = df["toneladas_ano_anterior"]
     df["var_t_pct"] = (100 * (df["toneladas"] / anterior_t - 1)).where(anterior_t > 0)
     df["var_share_pp"] = df["share_t_pct"] - df["share_t_pct_ano_anterior"]
     df["preco_fob_usd_t"] = preco_por_tonelada(df["vl_fob"], df["toneladas"])
+    if "vl_cif" in valores:
+        df["preco_cif_usd_t"] = preco_por_tonelada(df["vl_cif"], df["toneladas"])
     df.insert(1, "n_meses", df["ano"].map(lambda ano: len(meses[ano])))
-    return _ordenar(df, ["ano", "grupo", "toneladas"], decrescentes=("toneladas",))
+    return _ordenar(df, ["ano", por, "toneladas"], decrescentes=("toneladas",))
+
+
+def produtos_da_base(base: pd.DataFrame) -> pd.DataFrame:
+    """As linhas dos produtos de PRODUTOS_ORIGEM, com a coluna "produto": pelo NCM (os de
+    nutrientes.PRODUTOS) e, no grupo NPK, "npk". O resto (nitrato de amônio, outros NCMs) fica de fora."""
+    ncm_produto = {ncm: k for k in PRODUTOS_ORIGEM if k in nutrientes.PRODUTOS for ncm in nutrientes.PRODUTOS[k]["ncms"]}
+    produto = base["co_ncm"].map(ncm_produto).where(base["grupo"] != "NPK", "npk")
+    return base.assign(produto=produto).dropna(subset=["produto"])
 
 
 def concentracao(share_origem: pd.DataFrame) -> pd.DataFrame:
@@ -348,6 +371,41 @@ def _ranking(tabela: pd.DataFrame, codigo: str, nome: str, com_preco: bool) -> l
     return linhas
 
 
+def _bloco_origens_produto(tabela: pd.DataFrame) -> dict:
+    """Origens de cada produto nos ANOS_ORIGEM_PRODUTO anos mais recentes: toda origem com pelo menos
+    MINIMO_ORIGEM_PRODUTO_T no ano, em ordem de toneladas, e "Outros" com o resto (como no _ranking)."""
+    anos = sorted(int(a) for a in tabela["ano"].unique())[-ANOS_ORIGEM_PRODUTO:]
+    dados = {}
+    for ano in anos:
+        dados[str(ano)] = {}
+        for produto, g in tabela[tabela["ano"] == ano].groupby("produto", sort=False):
+            ativos = g[g["toneladas"] > 0]
+            top = ativos[ativos["toneladas"] >= MINIMO_ORIGEM_PRODUTO_T]
+            resto = g.drop(top.index)
+            linhas = [
+                [_texto(r["co_pais"]), _texto(r["no_pais"]), _num(r["toneladas"], 0), _num(r["share_t_pct"], 3),
+                 _num(r["var_t_pct"], 1), _num(r["preco_cif_usd_t"], 2)]
+                for _, r in top.iterrows()
+            ]
+            if resto["toneladas"].sum() > 0:
+                t, t_ant = resto["toneladas"].sum(), resto["toneladas_ano_anterior"].sum(min_count=1)
+                linhas.append([
+                    None, "Outros", _num(t, 0), _num(resto["share_t_pct"].sum(), 3),
+                    _num(100 * (t / t_ant - 1), 1) if t_ant and t_ant > 0 else None, _num(resto["vl_cif"].sum() / t, 2),
+                ])
+            if linhas:
+                dados[str(ano)][produto] = linhas
+    n_meses = tabela.groupby("ano")["n_meses"].first()
+    return {
+        "produtos": list(PRODUTOS_ORIGEM),
+        "colunas": ["codigo", "nome", "t", "share_pct", "var_t_pct", "cif_usd_t"],
+        "anos": anos,
+        "n_meses": [int(n_meses[a]) for a in anos],
+        "minimo_t": MINIMO_ORIGEM_PRODUTO_T,
+        "dados": dados,
+    }
+
+
 def _bloco_estados(share_uf: pd.DataFrame) -> dict:
     """Visão por estado: toneladas de cada UF de destino por ano e grupo, com o share, a
     variação sobre os mesmos meses do ano anterior e as toneladas desse período anterior (quem
@@ -489,6 +547,8 @@ def dashboard(
                 for ano in anos
             },
         }
+    if "share_origem_produto_ano" in tabelas:
+        painel["origens_produto"] = _bloco_origens_produto(tabelas["share_origem_produto_ano"])
     if "share_uf_ano" in tabelas:
         painel["estados"] = _bloco_estados(tabelas["share_uf_ano"])
     if "custo_nutriente_mensal" in tabelas:
@@ -553,6 +613,7 @@ def gerar(
         "share_origem_ano": shares_anuais(base, PAIS),
         "share_urf_ano": shares_anuais(base, URF),
         "share_uf_ano": shares_anuais(base, UF),
+        "share_origem_produto_ano": shares_anuais(produtos_da_base(base), PAIS, por="produto"),
         "custo_nutriente_mensal": nutrientes.custo_mensal(base, ptax),
     }
     tabelas["hhi_ano_grupo"] = concentracao(tabelas["share_origem_ano"])
