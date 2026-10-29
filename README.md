@@ -16,6 +16,8 @@ O site [radar.graaos.cloud](https://radar.graaos.cloud/) e o relatório mensal p
 continuam gratuitos para ler. O código do site e do relatório mensal fica num repositório privado;
 os números que eles mostram saem dos dados deste repositório.
 
+[![Graaos · Fertilizantes: KPIs de setembro de 2026 e toneladas importadas por mês, por grupo de fertilizante](docs/imagens/print.png)](https://radar.graaos.cloud/)
+
 **Fonte: Comex Stat/MDIC; Banco Mundial (Pink Sheet); BCB/PTAX.**
 
 ## O que tem aqui
@@ -123,6 +125,8 @@ Os testes não acessam a rede (as APIs são simuladas) e conferem os dados versi
 O dicionário de cada coluna e o formato do `sinais.json` estão em [DADOS.md](DADOS.md). A coluna
 `ano` dos Parquet fica no caminho (partição no estilo Hive), não dentro do arquivo. As saídas do
 transform são determinísticas: os mesmos dados geram arquivos idênticos.
+
+![Mapa de fluxos: a entrada animada, o destaque de uma origem no ranking, o clique na Rússia e a linha do tempo do potássio de 2021 a 2023](docs/imagens/mapa-fluxos.gif)
 
 **A UF do Comex Stat na importação é a UF de destino da mercadoria**, qualquer que seja a sede do
 importador, e não a UF do porto. **A URF não é exatamente o porto:** é a unidade da Receita onde a

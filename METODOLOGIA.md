@@ -47,6 +47,8 @@ edição, e o `fonte.json` registra a edição usada (data, URL e sha256).
 
 ## Cortes
 
+[![Diagrama de fluxo das importações de 2026 (jan-set), das maiores origens para as maiores URFs, e a tabela de frete por rota](docs/imagens/print-rotas.png)](https://radar.graaos.cloud/)
+
 | Corte | Valor | Onde vale |
 | --- | --- | --- |
 | Amostra pequena de fertilizante (`comparacao.CORTE_AMOSTRA_T`) | 10 mil t do produto no mês | benchmark, custo por nutriente e custo de insumo: o mês fica marcado e fora dos gráficos e das frases (um navio decide o preço), mas continua no CSV |
@@ -58,6 +60,8 @@ edição, e o `fonte.json` registra a edição usada (data, URL e sha256).
 
 ## Estados e portos
 
+[![Painel do Brasil por estado: um quadrado por UF, na cor da variação de 2025 sobre 2024, com as maiores altas e quedas em toneladas](docs/imagens/print-estados.png)](https://radar.graaos.cloud/)
+
 - A UF do Comex Stat na importação é a **UF de destino da mercadoria**, qualquer que seja a sede do
   importador, e não a UF do porto (`share_uf_ano.csv`).
 - A URF é a unidade da Receita onde a carga foi desembaraçada: quase sempre o porto de chegada, mas
@@ -67,6 +71,8 @@ edição, e o `fonte.json` registra a edição usada (data, URL e sha256).
   Central e o Caribe, na "América do Norte e Central".
 
 ## Relação de troca no porto
+
+[![Relação de troca no porto entre soja e KCl, ureia e MAP, de 2015 a 2026, com a média histórica de cada produto](docs/imagens/print-troca.png)](https://radar.graaos.cloud/)
 
 ```text
 relação de troca = preço CIF do fertilizante (US$/t) ÷ preço FOB da soja exportada (US$/t), no mesmo mês
@@ -82,6 +88,8 @@ armazenagem, margens da revenda e das tradings, prêmios de porto e o descasamen
 adubo e a venda da safra. A relação é US$/US$ e **não muda com o câmbio**: não existe "troca em R$".
 
 ## Custo por nutriente
+
+[![Custo por tonelada de nutriente no porto, de 2015 a 2026: ureia (N), MAP (P₂O₅) e KCl (K₂O)](docs/imagens/print-nutrientes.png)](https://radar.graaos.cloud/)
 
 ```text
 custo do nutriente (US$/t)    = CIF do produto (US$/t) ÷ teor do nutriente
@@ -106,6 +114,8 @@ também o custo sem o desconto. **É no porto (CIF), antes de impostos, frete in
 o preço ao produtor.**
 
 ## Brasil x mercado internacional (benchmark)
+
+[![Preço do KCl importado pelo Brasil contra o benchmark do Banco Mundial, de 2015 a 2026, com a mudança de base em 2020, e o spread na base comparável](docs/imagens/print-benchmark.png)](https://radar.graaos.cloud/)
 
 | Produto | NCM | Série da Pink Sheet | Base do benchmark | Comparação |
 | --- | --- | --- | --- | --- |
