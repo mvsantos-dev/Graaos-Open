@@ -1,10 +1,6 @@
-"""Marcos de mercado: o parser de data/eventos.yml (src/eventos.py) e a etapa do build que põe os
-eventos. Sem rede."""
+"""Marcos de mercado: o parser de data/eventos.yml (src/eventos.py). Sem rede."""
 
-import json
 import re
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest

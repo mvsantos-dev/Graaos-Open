@@ -1,24 +1,16 @@
-"""Base cartográfica do dashboard e tabelas de referência do mapa de fluxos.
+"""Tabelas de referência do mapa de fluxos (data/ref) e bloco "mapa" do dashboard.json.
 
-Tudo aqui roda à mão, em desenvolvimento, e o resultado fica versionado: o deploy não roda
-nada deste módulo e o navegador não faz nenhum cálculo de geografia.
+A geração de data/ref roda à mão, em desenvolvimento, e o resultado fica versionado: o
+transform só lê as tabelas, sem rede.
 
-    python -m src.mapa pontos   # mapa-pontos.json (hero e mapa de fluxos)
     python -m src.mapa urfs     # data/ref/urf_coordenadas.csv
     python -m src.mapa paises   # data/ref/paises_iso.csv (consulta o Comex Stat; --manter reaproveita)
 
 Fontes, todas abertas:
-- Natural Earth 1:110m, Admin 0 – Countries: pontos do mapa e o continente de cada ponto
-  (domínio público).
 - Natural Earth 1:50m, Admin 0 – Countries: ponto de rótulo (LABEL_X, LABEL_Y) e continente de
-  cada país, usados nas origens; a escala 1:50m inclui países pequenos que a 1:110m omite.
+  cada país, usados nas origens (domínio público).
 - Natural Earth 1:10m, Ports e Populated Places: coordenadas dos portos (URFs).
 - Comex Stat/MDIC, /tables/countries/{código}: código ISO 3166-1 alfa-3 de cada país.
-
-Pontos: projeção equirretangular; cada ponto é o centro de uma célula de PASSO graus e entra
-se cai dentro de algum país (regra par-ímpar, que respeita os buracos dos polígonos). Cada
-linha da grade vira uma lista plana de trincas [coluna inicial, quantidade, índice do país]:
-o ponto (x, y) é (coluna, linha) e o país é paises[índice], em ISO3. Fica de fora a Antártida.
 
 Continentes: o campo CONTINENT do Natural Earth, em códigos de duas letras (CONTINENTES). É a
 classificação do Natural Earth: a Rússia entra inteira na Europa; o México, a América Central e
@@ -29,12 +21,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import logging
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from . import config
@@ -43,22 +33,17 @@ log = logging.getLogger("radar.mapa")
 
 NE_VERSAO = "v5.1.2"
 NE_URL = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/" + NE_VERSAO + "/geojson/{}.geojson"
-NE_PAISES_110 = "ne_110m_admin_0_countries"
 NE_PAISES_50 = "ne_50m_admin_0_countries"
 NE_PORTOS = "ne_10m_ports"
 NE_CIDADES = "ne_10m_populated_places_simple"
 
-MAPA_JSON = config.RAIZ / "dashboard" / "assets" / "mapa-pontos.json"
 REF_DIR = config.DADOS_DIR / "ref"
 PAISES_CSV = REF_DIR / "paises_iso.csv"
 URFS_CSV = REF_DIR / "urf_coordenadas.csv"
 
-PASSO = 1.5  # graus por célula (o mesmo espaçamento da hero)
-
 # CONTINENT do Natural Earth -> código (duas letras) e nome em português
 CONTINENTES = {"Africa": "AF", "Asia": "AS", "Europe": "EU", "North America": "NA", "Oceania": "OC", "South America": "SA"}
 NOMES_CONTINENTES = {"AF": "África", "AS": "Ásia", "EU": "Europa", "NA": "América do Norte e Central", "OC": "Oceania", "SA": "América do Sul"}
-OESTE, NORTE, SUL = -180.0, 84.0, -57.0  # sem a Antártida
 
 # Cada URF com volume relevante -> onde ela fica no Natural Earth: camada "porto" (nome em
 # ne_10m_ports) ou "cidade" (nome em ne_10m_populated_places, na UF), e o nome do porto no
@@ -136,119 +121,6 @@ def _iso3(props: dict) -> str:
 def _continente(props: dict) -> str | None:
     """Código do continente do Natural Earth (None para Antártida e "Seven seas")."""
     return CONTINENTES.get(str(props.get("CONTINENT") or ""))
-
-
-def _aneis(geometria: dict) -> list[list[np.ndarray]]:
-    """Polígonos da geometria, cada um como lista de anéis (o primeiro é o exterior)."""
-    if geometria["type"] == "Polygon":
-        poligonos = [geometria["coordinates"]]
-    elif geometria["type"] == "MultiPolygon":
-        poligonos = geometria["coordinates"]
-    else:
-        return []
-    return [[np.asarray(anel, dtype=float)[:, :2] for anel in poligono] for poligono in poligonos]
-
-
-def _dentro(lon: np.ndarray, lat: np.ndarray, aneis: list[np.ndarray]) -> np.ndarray:
-    """Regra par-ímpar (ray casting) de vários pontos contra os anéis de um polígono."""
-    dentro = np.zeros(lon.shape, dtype=bool)
-    for anel in aneis:
-        x1, y1 = anel[:, 0], anel[:, 1]
-        x2, y2 = np.roll(x1, -1), np.roll(y1, -1)
-        for a, b, c, d in zip(x1, y1, x2, y2):
-            if b == d:
-                continue
-            cruza = (b > lat) != (d > lat)
-            x = a + (lat - b) * (c - a) / (d - b)
-            dentro ^= cruza & (lon < x)
-    return dentro
-
-
-def rasterizar(geojson: dict, passo: float = PASSO, oeste: float = OESTE, norte: float = NORTE, sul: float = SUL) -> dict:
-    """Grade de pontos com o país (ISO3) de cada um. Pura: não acessa a rede nem o disco."""
-    colunas = int(round(360 / passo))
-    linhas = int(round((norte - sul) / passo))
-    lon_c = oeste + (np.arange(colunas) + 0.5) * passo
-    lat_c = norte - (np.arange(linhas) + 0.5) * passo
-    grade = np.full((linhas, colunas), -1, dtype=int)
-    paises: list[str] = []
-    continentes: list[str | None] = []
-    rotulos: dict[str, list[float]] = {}
-    for feicao in geojson["features"]:
-        props = feicao.get("properties") or {}
-        codigo = _iso3(props)
-        if codigo == "ATA" or props.get("CONTINENT") == "Antarctica":
-            continue
-        indice = None
-        for aneis in _aneis(feicao["geometry"]):
-            todos = np.concatenate(aneis)
-            cols = np.nonzero((lon_c >= todos[:, 0].min()) & (lon_c <= todos[:, 0].max()))[0]
-            lins = np.nonzero((lat_c >= todos[:, 1].min()) & (lat_c <= todos[:, 1].max()))[0]
-            if not len(cols) or not len(lins):
-                continue
-            mlon, mlat = np.meshgrid(lon_c[cols], lat_c[lins])
-            dentro = _dentro(mlon, mlat, aneis)
-            if not dentro.any():
-                continue
-            if indice is None:
-                if codigo not in paises:
-                    paises.append(codigo)
-                    continentes.append(_continente(props))
-                indice = paises.index(codigo)
-            sub = grade[np.ix_(lins, cols)]
-            sub[dentro] = indice
-            grade[np.ix_(lins, cols)] = sub
-        if indice is not None and props.get("LABEL_X") is not None and props.get("LABEL_Y") is not None:
-            rotulos[codigo] = [round(float(props["LABEL_X"]), 2), round(float(props["LABEL_Y"]), 2)]
-    rle = []
-    for linha in grade:
-        trincas: list[int] = []
-        c = 0
-        while c < colunas:
-            p = linha[c]
-            if p < 0:
-                c += 1
-                continue
-            inicio = c
-            while c < colunas and linha[c] == p:
-                c += 1
-            trincas += [inicio, c - inicio, int(p)]
-        rle.append(trincas)
-    return {
-        "projecao": "equirretangular",
-        "passo": passo,
-        "oeste": oeste,
-        "norte": norte,
-        "colunas": colunas,
-        "linhas": linhas,
-        "pontos": int((grade >= 0).sum()),
-        "paises": paises,
-        "continentes": continentes,
-        "rotulos": rotulos,
-        "grade": rle,
-    }
-
-
-def expandir(mapa: dict) -> list[tuple[int, int, str]]:
-    """Os pontos da grade compacta como (coluna, linha, ISO3)."""
-    pontos = []
-    for linha, trincas in enumerate(mapa["grade"]):
-        for i in range(0, len(trincas), 3):
-            for c in range(trincas[i], trincas[i] + trincas[i + 1]):
-                pontos.append((c, linha, mapa["paises"][trincas[i + 2]]))
-    return pontos
-
-
-def gerar_pontos(geojson: dict | None = None, saida: Path = MAPA_JSON) -> dict:
-    url, sha = "(arquivo local)", None
-    if geojson is None:
-        geojson, url, sha = baixar_ne(NE_PAISES_110)
-    mapa = rasterizar(geojson)
-    conteudo = {"fonte": f"Natural Earth, Admin 0 – Countries, 1:110m ({NE_VERSAO}); domínio público", "origem": url, "sha256": sha, **mapa}
-    saida.parent.mkdir(parents=True, exist_ok=True)
-    saida.write_text(json.dumps(conteudo, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
-    log.info("%s: %d pontos, %d países, %d KB", saida, mapa["pontos"], len(mapa["paises"]), saida.stat().st_size // 1024)
-    return conteudo
 
 
 # --- URFs ---------------------------------------------------------------------------------
@@ -513,16 +385,12 @@ def bloco_dashboard(tabelas: dict[str, pd.DataFrame], paises: pd.DataFrame, urfs
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m src.mapa", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="comando", required=True)
-    p = sub.add_parser("pontos", help="mapa-pontos.json a partir do Natural Earth 1:110m")
-    p.add_argument("--geojson", type=Path, help="arquivo local (padrão: baixa a versão fixa)")
     sub.add_parser("urfs", help="data/ref/urf_coordenadas.csv")
     p = sub.add_parser("paises", help="data/ref/paises_iso.csv (uma consulta ao Comex Stat por país)")
     p.add_argument("--manter", action="store_true", help="reaproveita o ISO3 já gravado e só consulta países novos")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
-    if args.comando == "pontos":
-        gerar_pontos(json.loads(args.geojson.read_text(encoding="utf-8")) if args.geojson else None)
-    elif args.comando == "urfs":
+    if args.comando == "urfs":
         gerar_urfs()
     else:
         gerar_paises(manter=args.manter)

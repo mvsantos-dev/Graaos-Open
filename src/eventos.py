@@ -4,7 +4,7 @@ O arquivo é uma lista YAML, um mapeamento por evento. O site do Graaos põe
 os eventos na página e desenha uma linha vertical discreta no mês de cada um, nos
 gráficos dos produtos citados, com a dica (título, data e domínio da fonte) e o link da fonte.
 
-Só este subconjunto do YAML é aceito; qualquer coisa fora dele é erro e derruba o build:
+Só este subconjunto do YAML é aceito; qualquer coisa fora dele é erro e a leitura para:
 
     # comentário (linha inteira, ou depois de um espaço no fim da linha)
     - data: 2026-03-15                # AAAA-MM-DD ou AAAA-MM
@@ -59,7 +59,7 @@ _URL_PROIBIDOS = set('"<>\\^`{|}')
 
 
 class ErroEventos(ValueError):
-    """Arquivo de eventos fora do formato (o build do site para)."""
+    """Arquivo de eventos fora do formato (a leitura para com o erro e a linha)."""
 
 
 # --- Leitura do subconjunto do YAML ---------------------------------------------------------

@@ -3,7 +3,7 @@
 Lê o data/processed/dashboard.json e, para cada mês da série e cada produto acompanhado, calcula
 os sinais só com os dados até aquele mês: nenhuma regra olha o futuro, então o histórico mostra o
 que teria disparado em cada mês. Grava tudo em data/sinais.json, num formato estável documentado
-no README (o campo "versao" só muda se um campo sair ou mudar de sentido). Os limites ficam em
+no DADOS.md (o campo "versao" só muda se um campo sair ou mudar de sentido). Os limites ficam em
 config.py (SINAIS_*) e voltam no campo "limites" do arquivo.
 
 Produtos (as mesmas chaves do site, do feed e dos marcos de mercado) e de onde vêm as séries:

@@ -1,0 +1,45 @@
+cff-version: 1.2.0
+message: >-
+  Se usar estes dados ou este código, cite como abaixo. Crédito dos dados tratados:
+  "Graaos (github.com/mvsantos-dev/Graaos-Open)". Fonte: Comex Stat/MDIC; Banco Mundial
+  (Pink Sheet); BCB/PTAX.
+type: dataset
+title: "Graaos (github.com/mvsantos-dev/Graaos-Open): importação de fertilizantes no Brasil"
+abstract: >-
+  Core aberto do Graaos: pipeline e dados tratados das importações brasileiras de
+  fertilizantes (capítulo 31 do SH), dos insumos do fósforo (enxofre e rocha fosfática), da
+  relação de troca no porto com a soja exportada, da comparação com a Pink Sheet do Banco
+  Mundial e dos sinais de preço e de volume, só com dados abertos oficiais.
+authors:
+  - name: "Graaos (github.com/mvsantos-dev/Graaos-Open)"
+  - family-names: Santos
+    given-names: Marcus
+repository-code: "https://github.com/mvsantos-dev/Graaos-Open"
+url: "https://radar.graaos.cloud/"
+license: CC-BY-4.0
+keywords:
+  - fertilizantes
+  - comércio exterior
+  - Comex Stat
+  - Pink Sheet
+  - PTAX
+  - agronegócio
+  - dados abertos
+references:
+  - type: data
+    title: "Comex Stat"
+    authors:
+      - name: "Ministério do Desenvolvimento, Indústria, Comércio e Serviços (MDIC)"
+    url: "https://comexstat.mdic.gov.br/"
+  - type: data
+    title: "World Bank Commodity Price Data (The Pink Sheet)"
+    authors:
+      - name: "Banco Mundial"
+    url: "https://www.worldbank.org/en/research/commodity-markets"
+    license: CC-BY-4.0
+  - type: data
+    title: "SGS 3698: taxa de câmbio, dólar americano (venda), média mensal (PTAX)"
+    authors:
+      - name: "Banco Central do Brasil"
+    url: "https://api.bcb.gov.br/dados/serie/bcdata.sgs.3698/dados?formato=json"
+    license: ODbL-1.0

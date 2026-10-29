@@ -31,7 +31,7 @@ RAW_INSUMOS_DIR = DADOS_DIR / "raw_insumos"
 API_BASE_URL = "https://api-comexstat.mdic.gov.br"
 API_HOST = urlsplit(API_BASE_URL).hostname
 IDIOMA = "pt"
-USER_AGENT = "graaos (+https://github.com/mvsantos-dev/graaos)"
+USER_AGENT = "graaos (+https://github.com/mvsantos-dev/Graaos-Open)"
 
 ENDPOINT_CONSULTA = "/general"
 ENDPOINT_ULTIMA_ATUALIZACAO = "/general/dates/updated"

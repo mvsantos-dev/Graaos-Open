@@ -37,7 +37,7 @@ PRODUTOS = {
     "enxofre": {"nome": "Enxofre", "descricao": "enxofre a granel e outras formas"},
     "rocha": {"nome": "Rocha fosfática", "descricao": "fosfatos de cálcio naturais, não moídos e moídos"},
 }
-# Rocha fosfática na Pink Sheet (coluna gravada por src/benchmark.py) e a base dela (CLAUDE.md).
+# Rocha fosfática na Pink Sheet (coluna gravada por src/benchmark.py) e a base dela (METODOLOGIA.md).
 ROCHA_SERIE = "Phosphate rock"
 ROCHA_COLUNA = config.PINK_SERIES[ROCHA_SERIE]
 ROCHA_BASE = "FOB Norte da África"

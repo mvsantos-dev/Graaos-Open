@@ -1,0 +1,303 @@
+# Atualização automática mensal dos dados (só dados: nenhum texto é gerado aqui).
+#
+# Cinco séries, de três fontes que publicam o mês anterior nos primeiros dias úteis:
+# importação de fertilizantes, importação de enxofre e rocha fosfática (os insumos do fósforo) e
+# exportação de soja (Comex Stat/MDIC), preços internacionais (Pink Sheet do Banco Mundial) e
+# câmbio (PTAX do BCB, SGS 3698). Um mês só entra quando está COMPLETO, gravado nas cinco
+# séries. Entre os dias 1 e 15, o workflow roda uma vez por dia:
+#   1. se o mês anterior já está gravado nas cinco séries, não chama nenhuma fonte;
+#   2. senão, roda a ingestão incremental das cinco séries (Pink Sheet e PTAX primeiro; o
+#      Comex Stat só até o menor mês das duas), o transform, os sinais de preço e de volume
+#      (src/sinais.py, regras fixas sem IA, em data/sinais.json) e os testes;
+#   3. se o último mês completo avançou, commita o que mudou em data/ como github-actions[bot],
+#      com a mensagem "chore(dados): atualização AAAA-MM", e cria o release "dados-AAAA-MM" com o
+#      dashboard.json, o sinais.json e os CSVs de data/processed/.
+# Se alguma fonte ainda não publicou o mês, nada é commitado e o run fica verde, com um aviso
+# dizendo qual falta; a partir do dia 15, o job "prazo" fica vermelho dizendo qual. Se uma
+# fonte falhar ou não devolver algum mês que diz ter publicado, nada é commitado.
+#
+# Privilégios separados por job, sem pull_request_target e sem nenhum secret além do
+# GITHUB_TOKEN do próprio Actions:
+#   - "atualizar" roda Python e as dependências de terceiros só com permissão de leitura e
+#     entrega data/ como artifact;
+#   - "commitar" é o único com contents: write: só roda git e o gh (sem pip nem Python, com hooks
+#     desligados) e recusa mudanças fora de data/;
+#   - "prazo" não tem permissão nenhuma nem faz checkout: só falha com o nome da fonte que
+#     ainda não publicou o mês depois do dia 15.
+name: Atualização mensal
+
+on:
+  schedule:
+    - cron: "17 11 1-15 * *" # dias 1 a 15 de cada mês, 11h17 UTC (8h17 em Brasília)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atualizacao
+  cancel-in-progress: false
+
+jobs:
+  atualizar:
+    name: Ingestão, transform e testes
+    # Só na main: o commit vai direto para ela.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      mes: ${{ steps.resultado.outputs.mes }}
+      esperado: ${{ steps.checar.outputs.esperado }}
+      atrasadas: ${{ steps.resultado.outputs.atrasadas }}
+      prazo_vencido: ${{ steps.resultado.outputs.prazo_vencido }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Instalar dependências
+        timeout-minutes: 10
+        run: python -m pip install -r requirements.txt "pytest>=8"
+
+      - name: Conferir se falta o mês anterior
+        id: checar
+        timeout-minutes: 5
+        run: |
+          esperado="$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m)"
+          gravado="$(python -m src.ingest --ultimo-gravado)"
+          echo "esperado=${esperado}" >> "$GITHUB_OUTPUT"
+          echo "gravado=${gravado}" >> "$GITHUB_OUTPUT"
+          echo "Mês esperado: ${esperado}. Último mês completo (gravado nas cinco séries): ${gravado:-nenhum}."
+          python -m src.ingest --ultimo-gravado --por-serie
+          if [[ -n "${gravado}" && ! "${gravado}" < "${esperado}" ]]; then
+            echo "Dados já atualizados até ${gravado}: nada a baixar até o próximo mês." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "falta=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "falta=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ingestão incremental (Comex Stat, Pink Sheet e PTAX)
+        id: ingestao
+        if: steps.checar.outputs.falta == 'true'
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/ingest.log"
+          falhou() {
+            echo "::error title=Falha na ingestão::Uma das fontes (API do Comex Stat, Pink Sheet do Banco Mundial ou PTAX do BCB) falhou ou não devolveu algum mês já publicado (detalhes no log deste passo). Nada foi commitado; a próxima execução agendada tenta de novo."
+            exit 1
+          }
+          # Pink Sheet (o arquivo inteiro, com as revisões listadas no log) e PTAX (só os meses
+          # que faltam) primeiro. O Comex Stat vai só até o menor mês das duas: um mês do Comex
+          # sem benchmark ou sem câmbio não chega ao dashboard.json.
+          python -m src.ingest --inicio 2015-01 --serie benchmark 2>&1 | tee -a "$log" || falhou
+          python -m src.ingest --inicio 2015-01 --serie cambio 2>&1 | tee -a "$log" || falhou
+          pink="$(python -m src.ingest --ultimo-gravado --serie benchmark)"
+          ptax="$(python -m src.ingest --ultimo-gravado --serie cambio)"
+          limite="${pink}"
+          if [[ "${ptax}" < "${limite}" ]]; then limite="${ptax}"; fi
+          if [[ ! "${limite}" =~ ^[0-9]{4}-(0[1-9]|1[0-2])$ ]]; then
+            echo "::error title=Sem Pink Sheet ou PTAX::Não há mês gravado na Pink Sheet (${pink:-nenhum}) ou na PTAX (${ptax:-nenhum}); o Comex Stat não foi baixado."
+            exit 1
+          fi
+          echo "Comex Stat até ${limite} (Pink Sheet até ${pink}, PTAX até ${ptax})." | tee -a "$log"
+          python -m src.ingest --inicio 2015-01 --fim "${limite}" --serie fertilizantes 2>&1 | tee -a "$log" || falhou
+          python -m src.ingest --inicio 2015-01 --fim "${limite}" --serie soja 2>&1 | tee -a "$log" || falhou
+          python -m src.ingest --inicio 2015-01 --fim "${limite}" --serie insumos 2>&1 | tee -a "$log" || falhou
+          # Para o aviso: o Comex Stat segurado em ${limite} não é uma fonte atrasada.
+          comex="$(sed -nE 's/.*Último mês publicado na API: ([0-9]{4}-(0[1-9]|1[0-2]))\..*/\1/p' "$log" | tail -n 1)"
+          echo "limite=${limite}" >> "$GITHUB_OUTPUT"
+          echo "comex=${comex}" >> "$GITHUB_OUTPUT"
+
+      - name: Transform, sinais e testes
+        if: steps.checar.outputs.falta == 'true'
+        timeout-minutes: 10
+        run: |
+          python -m src.transform
+          # Sinais de preço e de volume do histórico inteiro, com o mês novo (antes dos testes,
+          # que conferem que o data/sinais.json é o que sai do dashboard.json).
+          python -m src.sinais
+          python -m pytest -q
+
+      - name: Separar o mês completo novo
+        id: resultado
+        if: steps.checar.outputs.falta == 'true'
+        timeout-minutes: 5
+        env:
+          ANTES: ${{ steps.checar.outputs.gravado }}
+          ESPERADO: ${{ steps.checar.outputs.esperado }}
+          LIMITE: ${{ steps.ingestao.outputs.limite }}
+          COMEX: ${{ steps.ingestao.outputs.comex }}
+        run: |
+          # Séries que ainda não têm o mês esperado: a fonte não publicou ou atrasou. O Comex
+          # Stat só é baixado até LIMITE (o menor mês da Pink Sheet e da PTAX): se ele já
+          # publicou o mês, a série fica "retida", não atrasada.
+          atrasadas=""
+          retidas=""
+          while read -r serie mes; do
+            if [[ "${mes}" == "-" || "${mes}" < "${ESPERADO}" ]]; then
+              case "${serie}" in
+                fertilizantes) nome="importação de fertilizantes (Comex Stat/MDIC)" ;;
+                soja) nome="exportação de soja (Comex Stat/MDIC)" ;;
+                insumos) nome="importação de enxofre e rocha fosfática (Comex Stat/MDIC)" ;;
+                benchmark) nome="Pink Sheet (Banco Mundial)" ;;
+                cambio) nome="PTAX (BCB)" ;;
+                *) nome="${serie}" ;;
+              esac
+              comex_retido=false
+              if [[ ( "${serie}" == fertilizantes || "${serie}" == soja || "${serie}" == insumos ) && -n "${LIMITE}" && "${mes}" == "${LIMITE}" ]]; then
+                comex_retido=true
+              fi
+              if [[ "${comex_retido}" == true && -n "${COMEX}" && ! "${COMEX}" < "${ESPERADO}" ]]; then
+                retidas+="${retidas:+; }${nome}"
+              elif [[ "${comex_retido}" == true && -z "${COMEX}" ]]; then
+                atrasadas+="${atrasadas:+; }${nome}, não consultada além de ${LIMITE} (espera a Pink Sheet e a PTAX)"
+              elif [[ "${mes}" == "-" ]]; then
+                atrasadas+="${atrasadas:+; }${nome}, sem nada gravado"
+              else
+                atrasadas+="${atrasadas:+; }${nome}, gravada até ${mes}"
+              fi
+            fi
+          done < <(python -m src.ingest --ultimo-gravado --por-serie)
+          if [[ -n "${retidas}" ]]; then
+            retidas="O Comex Stat já publicou até ${COMEX}, mas só foi baixado até ${LIMITE}, à espera da Pink Sheet e da PTAX: ${retidas}."
+          fi
+          depois="nova checagem amanhã"
+          if [[ -n "${atrasadas}" ]]; then
+            echo "atrasadas=${atrasadas}" >> "$GITHUB_OUTPUT"
+            if (( $(date -u +%-d) >= 15 )); then
+              echo "prazo_vencido=true" >> "$GITHUB_OUTPUT"
+              depois="passou o dia 15: o job \"prazo\" fica vermelho"
+            fi
+          fi
+          # Mês completo = o menor entre as cinco séries. Só ele decide se há o que commitar.
+          mes="$(python -m src.ingest --ultimo-gravado)"
+          if [[ -z "${mes}" || ( -n "${ANTES}" && ! "${mes}" > "${ANTES}" ) ]]; then
+            echo "::notice title=Mês ${ESPERADO} incompleto::Falta ${ESPERADO} em: ${atrasadas:-nenhuma série}. ${retidas:+${retidas} }Nada foi commitado; ${depois}."
+            echo "Mês ${ESPERADO} incompleto. Falta em: ${atrasadas:-nenhuma série}. ${retidas:+${retidas} }Nada foi commitado; ${depois}." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "mes=${mes}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Atualização ${mes}"
+            echo
+            echo '```text'
+            grep -E "^(Resumo|  )" "$RUNNER_TEMP/ingest.log" || true
+            echo '```'
+            echo
+            if [[ -n "${atrasadas}" ]]; then
+              echo "Ainda falta ${ESPERADO} em: ${atrasadas}."
+              echo
+            fi
+            if [[ -n "${retidas}" ]]; then
+              echo "${retidas}"
+              echo
+            fi
+            echo "Fonte: Comex Stat/MDIC; Banco Mundial (Pink Sheet); BCB/PTAX."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Entregar data/ para o commit
+        if: steps.resultado.outputs.mes != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: dados
+          path: |
+            data/raw
+            data/raw_soja
+            data/raw_insumos
+            data/ncm_insumos.csv
+            data/raw_benchmark
+            data/raw_cambio
+            data/processed
+            data/sinais.json
+          if-no-files-found: error
+          retention-days: 1
+
+  commitar:
+    name: Commit dos dados e release do mês
+    needs: atualizar
+    if: ${{ !cancelled() && needs.atualizar.result == 'success' && needs.atualizar.outputs.mes != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Receber data/
+        uses: actions/download-artifact@v8
+        with:
+          name: dados
+          path: data
+      - name: Commitar e enviar para a main
+        id: push
+        env:
+          MES: ${{ needs.atualizar.outputs.mes }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ ! "${MES}" =~ ^[0-9]{4}-(0[1-9]|1[0-2])$ ]]; then
+            echo "::error title=Mês inválido::O job de atualização devolveu '${MES}'."
+            exit 1
+          fi
+          fora="$(git status --porcelain | grep -vE '^.. data/((raw|raw_soja|raw_insumos|raw_benchmark|raw_cambio|processed)/|ncm_insumos\.csv$|sinais\.json$)' || true)"
+          if [[ -n "${fora}" ]]; then
+            echo "::error title=Mudança fora de data/::${fora}"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- data/raw data/raw_soja data/raw_insumos data/ncm_insumos.csv data/raw_benchmark data/raw_cambio data/processed data/sinais.json
+          if git diff --cached --quiet; then
+            echo "Nada mudou em data/; nada a commitar."
+          else
+            git -c core.hooksPath=/dev/null commit -m "chore(dados): atualização ${MES}"
+            auth="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+            echo "::add-mask::${auth}"
+            if ! GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" \
+                 GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${auth}" \
+                 git -c core.hooksPath=/dev/null push origin HEAD:main; then
+              echo "::error title=Push recusado::A main mudou durante a atualização. Nada foi publicado; a próxima execução refaz a atualização."
+              exit 1
+            fi
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Criar o release dados-${{ needs.atualizar.outputs.mes }}
+        env:
+          MES: ${{ needs.atualizar.outputs.mes }}
+          SHA: ${{ steps.push.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="dados-${MES}"
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+            echo "O release ${tag} já existe; nada a fazer."
+            exit 0
+          fi
+          notas="Dados tratados do Graaos até ${MES}: dashboard.json, sinais.json (formato versão 1) e os CSVs de data/processed/. Dicionário de campos em DADOS.md e método em METODOLOGIA.md. Licença dos dados tratados: CC BY 4.0, crédito \"Graaos (github.com/mvsantos-dev/Graaos-Open)\". Os dados de origem seguem as licenças das fontes. Fonte: Comex Stat/MDIC; Banco Mundial (Pink Sheet); BCB/PTAX."
+          gh release create "${tag}" --repo "${GITHUB_REPOSITORY}" --target "${SHA}" \
+            --title "Dados ${MES}" --notes "${notas}" \
+            data/processed/dashboard.json data/sinais.json data/processed/*.csv
+          echo "Release ${tag} criado no commit ${SHA}." >> "$GITHUB_STEP_SUMMARY"
+
+  # Fonte que não publicou o mês até o dia 15: o run fica vermelho dizendo qual. Separado do
+  # job "atualizar" para não travar o commit dos meses completos que já entraram.
+  prazo:
+    name: Prazo das fontes (dia 15)
+    needs: atualizar
+    if: ${{ !cancelled() && needs.atualizar.outputs.prazo_vencido == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Fonte sem o mês esperado
+        env:
+          ESPERADO: ${{ needs.atualizar.outputs.esperado }}
+          ATRASADAS: ${{ needs.atualizar.outputs.atrasadas }}
+        run: |
+          echo "::error title=Fonte sem o mês ${ESPERADO}::Passou o dia 15 e ainda falta ${ESPERADO} em: ${ATRASADAS}. Nenhum mês incompleto foi commitado. Confira se a fonte mudou de endereço ou de formato e, quando ela publicar, rode este workflow manualmente."
+          exit 1
