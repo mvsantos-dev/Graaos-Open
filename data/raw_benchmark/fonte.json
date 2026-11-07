@@ -3,8 +3,9 @@
  "licenca": "CC BY 4.0",
  "pagina": "https://www.worldbank.org/en/research/commodity-markets",
  "url": "https://thedocs.worldbank.org/en/doc/74e8be41ceb20fa0da750cda2f6b9e4e-0050012026/related/CMO-Historical-Data-Monthly.xlsx",
- "atualizado_em": "2026-10-02",
- "sha256": "ea1c350827878ea3bbe30e3cda16a13fd3bd5b409b8458940dc94a36b5a33154",
+ "atualizado_em": "2026-11-03",
+ "ultima_data_conhecida": "2026-11-03",
+ "sha256": "3c8d9d8dbb48342fdbf24777c39a8ce8964cc2fd0958f72f6779e6e4ad99cde2",
  "aba": "Monthly Prices",
  "unidade": "US$ por tonelada métrica, nominal",
  "colunas": {
